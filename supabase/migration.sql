@@ -370,12 +370,13 @@ DECLARE
   v_user_id UUID;
 BEGIN
   -- Insert dummy user into auth.users (encrypted password set to 'student123')
-  INSERT INTO auth.users (id, aud, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, role, confirmation_token)
+  INSERT INTO auth.users (id, aud, email, encrypted_password, email_confirmed_at, phone_confirmed_at, raw_app_meta_data, raw_user_meta_data, role, confirmation_token)
   VALUES (
     uuid_generate_v4(),
     'authenticated',
     p_email,
     crypt('student123', gen_salt('bf')),
+    now(),
     now(),
     '{"provider":"email","providers":["email"]}',
     json_build_object('full_name', p_name, 'role', 'student'),
