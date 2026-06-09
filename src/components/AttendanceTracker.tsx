@@ -299,13 +299,13 @@ export const AttendanceTracker: React.FC = () => {
               </span>
             </div>
 
-            {studentsLoading ? (
+            {!selectedClassId || studentsLoading ? (
               <p className="text-xs text-gray-500 text-center py-10 animate-pulse">Syncing student list...</p>
-            ) : students && students.length === 0 ? (
+            ) : !students || students.length === 0 ? (
               <p className="text-xs text-gray-500 text-center py-10">No students allocated in this class grade.</p>
             ) : (
               <div className="divide-y divide-white/5">
-                {students.map((stu: any) => {
+                {students?.map((stu: any) => {
                   const currentStatus = getStudentStatus(stu.id);
                   return (
                     <div key={stu.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-3">
