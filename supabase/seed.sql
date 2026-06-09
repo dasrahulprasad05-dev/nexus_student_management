@@ -42,7 +42,12 @@ INSERT INTO auth.users (
   created_at,
   updated_at,
   role,
-  confirmation_token
+  confirmation_token,
+  email_change,
+  email_change_token_new,
+  email_change_token_current,
+  recovery_token,
+  reauthentication_token
 )
 VALUES
   (
@@ -54,7 +59,7 @@ VALUES
     now(), now(),
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"Admin Principal","role":"admin"}',
-    now(), now(), 'authenticated', ''
+    now(), now(), 'authenticated', '', '', '', '', '', ''
   ),
   (
     '00000000-0000-0000-0000-000000000000',
@@ -65,7 +70,7 @@ VALUES
     now(), now(),
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"Sarah Connor","role":"teacher"}',
-    now(), now(), 'authenticated', ''
+    now(), now(), 'authenticated', '', '', '', '', '', ''
   ),
   (
     '00000000-0000-0000-0000-000000000000',
@@ -76,7 +81,7 @@ VALUES
     now(), now(),
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"Alan Turing","role":"teacher"}',
-    now(), now(), 'authenticated', ''
+    now(), now(), 'authenticated', '', '', '', '', '', ''
   ),
   (
     '00000000-0000-0000-0000-000000000000',
@@ -87,7 +92,7 @@ VALUES
     now(), now(),
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"John Doe","role":"student"}',
-    now(), now(), 'authenticated', ''
+    now(), now(), 'authenticated', '', '', '', '', '', ''
   ),
   (
     '00000000-0000-0000-0000-000000000000',
@@ -98,7 +103,7 @@ VALUES
     now(), now(),
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"Jane Smith","role":"student"}',
-    now(), now(), 'authenticated', ''
+    now(), now(), 'authenticated', '', '', '', '', '', ''
   ),
   (
     '00000000-0000-0000-0000-000000000000',
@@ -109,7 +114,7 @@ VALUES
     now(), now(),
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"James Smith","role":"parent"}',
-    now(), now(), 'authenticated', ''
+    now(), now(), 'authenticated', '', '', '', '', '', ''
   );
 
 -- ==========================================================
