@@ -216,9 +216,9 @@ export const Gradebook: React.FC = () => {
       </div>
 
       {/* Interactive Score Grid Matrix */}
-      {studentsLoading || examsLoading ? (
+      {!selectedClassId || studentsLoading || examsLoading ? (
         <p className="text-xs text-gray-500 text-center py-12 animate-pulse">Syncing class grade registries...</p>
-      ) : students && students.length === 0 ? (
+      ) : !students || students.length === 0 ? (
         <p className="text-xs text-gray-500 text-center py-12">No student records found in class roster.</p>
       ) : (
         <div className="glass-card rounded-xl border border-white/5 overflow-hidden shadow-lg">
@@ -243,7 +243,7 @@ export const Gradebook: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 text-gray-400">
-                {students.map((stu: any) => (
+                {students?.map((stu: any) => (
                   <tr key={stu.id} className="hover:bg-white/2 transition-colors duration-100">
                     <td className="p-4 font-semibold text-white">
                       {stu.profiles?.full_name}
@@ -252,7 +252,7 @@ export const Gradebook: React.FC = () => {
                     <td className="p-4 text-center font-bold text-cyber-primary text-sm">
                       {stu.gpa?.toFixed(2) || '0.00'}
                     </td>
-                    {exams && exams.map((exam: any) => {
+                    {exams?.map((exam: any) => {
                       const score = getScore(stu.id, exam.id);
                       const isEditing = editingCell?.studentId === stu.id && editingCell?.examId === exam.id;
                       
