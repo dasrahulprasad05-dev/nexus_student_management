@@ -230,11 +230,11 @@ export const AssignmentHub: React.FC = () => {
 
               {assignmentsLoading ? (
                 <p className="text-xs text-gray-500 text-center py-10 animate-pulse">Syncing tasks...</p>
-              ) : assignments && assignments.length === 0 ? (
+              ) : !assignments || assignments.length === 0 ? (
                 <p className="text-xs text-gray-500 text-center py-10">No homework tasks published in this class yet.</p>
               ) : (
                 <div className="divide-y divide-white/5">
-                  {assignments.map((assg: any) => (
+                  {assignments?.map((assg: any) => (
                     <div key={assg.id} className="p-4 flex justify-between items-start gap-4">
                       <div>
                         <h4 className="font-semibold text-xs text-white">{assg.title}</h4>
@@ -361,11 +361,11 @@ export const AssignmentHub: React.FC = () => {
 
             {assignmentsLoading ? (
               <p className="text-xs text-gray-500 text-center py-10 animate-pulse">Syncing class task files...</p>
-            ) : assignments && assignments.length === 0 ? (
+            ) : !assignments || assignments.length === 0 ? (
               <p className="text-xs text-gray-500 text-center py-10">No pending assignments allocated to your class.</p>
             ) : (
               <div className="space-y-4">
-                {assignments.map((assg: any) => {
+                {assignments?.map((assg: any) => {
                   const subStatus = getSubmissionStatus(assg.id);
                   return (
                     <div key={assg.id} className="glass-card rounded-xl p-4 border border-white/5 hover:border-cyber-primary/10 transition-colors flex flex-col justify-between h-40">
