@@ -85,12 +85,14 @@ export const ParentDashboard: React.FC = () => {
       const attendanceRate = totalAtt > 0 ? Math.round((presentCount / totalAtt) * 100) : 100;
 
       // Recent marks obtained
-      const { data: marks } = await supabase
+      const { data: marks, error: marksError } = await supabase
         .from('marks')
         .select('*, exams(*)')
         .eq('student_id', selectedChildId)
         .order('created_at', { ascending: false })
         .limit(5);
+
+      console.log('MARKS:', marks, marksError);
 
       return {
         student,
