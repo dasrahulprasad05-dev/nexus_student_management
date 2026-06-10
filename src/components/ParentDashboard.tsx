@@ -15,19 +15,33 @@ export const ParentDashboard: React.FC = () => {
     queryKey: ['parent-kids', user?.id],
     queryFn: async () => {
       if (!user) return [];
-      const { data, error } = await supabase
+
+      // Step 1: get student rows linked to this parent
+      const { data: studentRows, error } = await supabase
         .from('students')
-        .select('*, profiles!students_id_fkey(*)')
+        .select('*')
         .eq('parent_id', user.id);
 
       console.log('PARENT QUERY - user.id:', user.id);
-      console.log('PARENT QUERY - data:', data);
+      console.log('PARENT QUERY - studentRows:', studentRows);
       console.log('PARENT QUERY - error:', error);
 
-      if (data && data.length > 0) {
-        setSelectedChildId(data[0].id);
-      }
-      return data || [];
+      if (!studentRows || studentRows.length === 0) return [];
+
+      // Step 2: get their profiles separately
+      const ids = studentRows.map((s: any) => s.id);
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('id', ids);
+
+      const result = studentRows.map((s: any) => ({
+        ...s,
+        profiles: profiles?.find((p: any) => p.id === s.id) || null
+      }));
+
+      if (result.length > 0) setSelectedChildId(result[0].id);
+      return result;
     },
     enabled: !!user
   });
@@ -39,11 +53,25 @@ export const ParentDashboard: React.FC = () => {
       if (!selectedChildId) return null;
 
       // Student and Class details
-      const { data: student } = await supabase
+      const { data: studentRow } = await supabase
         .from('students')
-        .select('*, profiles!students_id_fkey(*), classes(*)')
+        .select('*, classes(*)')
         .eq('id', selectedChildId)
         .single();
+
+      let student = null;
+      if (studentRow) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', selectedChildId)
+          .single();
+        
+        student = {
+          ...studentRow,
+          profiles: profile || null
+        };
+      }
 
       // Attendance history
       const { data: att } = await supabase
