@@ -399,3 +399,224 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
+-- ==========================================
+-- STORAGE BUCKETS & POLICIES
+-- ==========================================
+
+-- Create buckets for storage
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('assignments', 'assignments', true)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('submissions', 'submissions', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- RLS Policies for storage.objects
+DROP POLICY IF EXISTS "Public Read Submissions" ON storage.objects;
+CREATE POLICY "Public Read Submissions" ON storage.objects FOR SELECT USING (bucket_id = 'submissions');
+
+DROP POLICY IF EXISTS "Public Read Assignments" ON storage.objects;
+CREATE POLICY "Public Read Assignments" ON storage.objects FOR SELECT USING (bucket_id = 'assignments');
+
+DROP POLICY IF EXISTS "Authenticated Upload Submissions" ON storage.objects;
+CREATE POLICY "Authenticated Upload Submissions" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'submissions');
+
+DROP POLICY IF EXISTS "Authenticated Upload Assignments" ON storage.objects;
+CREATE POLICY "Authenticated Upload Assignments" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'assignments');
+
+
+-- ==========================================
+-- AUTOMATIC GPA RECAlCULATION
+-- ==========================================
+
+CREATE OR REPLACE FUNCTION public.calculate_student_gpa(p_student_id UUID)
+RETURNS void AS $$
+DECLARE
+  v_gpa NUMERIC(3,2);
+BEGIN
+  SELECT COALESCE(AVG(
+    CASE 
+      WHEN e.max_marks > 0 AND (m.marks_obtained::numeric / e.max_marks::numeric * 100) >= 90 THEN 4.0
+      WHEN e.max_marks > 0 AND (m.marks_obtained::numeric / e.max_marks::numeric * 100) >= 80 THEN 3.5
+      WHEN e.max_marks > 0 AND (m.marks_obtained::numeric / e.max_marks::numeric * 100) >= 70 THEN 3.0
+      WHEN e.max_marks > 0 AND (m.marks_obtained::numeric / e.max_marks::numeric * 100) >= 60 THEN 2.5
+      WHEN e.max_marks > 0 AND (m.marks_obtained::numeric / e.max_marks::numeric * 100) >= 50 THEN 2.0
+      ELSE 0.0
+    END
+  ), 0.00) INTO v_gpa
+  FROM public.marks m
+  JOIN public.exams e ON m.exam_id = e.id
+  WHERE m.student_id = p_student_id;
+
+  UPDATE public.students
+  SET gpa = v_gpa
+  WHERE id = p_student_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION public.on_mark_change()
+RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.calculate_student_gpa(OLD.student_id);
+    RETURN OLD;
+  ELSE
+    PERFORM public.calculate_student_gpa(NEW.student_id);
+    RETURN NEW;
+  END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trigger_on_mark_change ON public.marks;
+CREATE TRIGGER trigger_on_mark_change
+  AFTER INSERT OR UPDATE OR DELETE ON public.marks
+  FOR EACH ROW EXECUTE FUNCTION public.on_mark_change();
+
+
+-- ==========================================
+-- GAMIFICATION LOGIC (EXP, LEVEL & BADGES)
+-- ==========================================
+
+CREATE OR REPLACE FUNCTION public.add_student_exp(p_student_id UUID, p_exp_to_add INT)
+RETURNS void AS $$
+DECLARE
+  v_current_exp INT;
+  v_current_level INT;
+  v_next_level_threshold INT;
+BEGIN
+  SELECT exp, level INTO v_current_exp, v_current_level
+  FROM public.students
+  WHERE id = p_student_id;
+
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  v_current_exp := COALESCE(v_current_exp, 0) + p_exp_to_add;
+
+  LOOP
+    v_next_level_threshold := COALESCE(v_current_level, 1) * 100;
+    IF v_current_exp >= v_next_level_threshold THEN
+      v_current_exp := v_current_exp - v_next_level_threshold;
+      v_current_level := COALESCE(v_current_level, 1) + 1;
+    ELSE
+      EXIT;
+    END IF;
+  END LOOP;
+
+  UPDATE public.students
+  SET exp = v_current_exp, level = v_current_level
+  WHERE id = p_student_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION public.on_attendance_checkin()
+RETURNS trigger AS $$
+DECLARE
+  v_attendance_count INT;
+BEGIN
+  IF NEW.status IN ('present', 'late') THEN
+    PERFORM public.add_student_exp(NEW.student_id, 10);
+    
+    SELECT COUNT(*) INTO v_attendance_count
+    FROM public.attendance
+    WHERE student_id = NEW.student_id AND status IN ('present', 'late');
+
+    IF v_attendance_count >= 5 THEN
+      INSERT INTO public.badges (student_id, badge_type, title, description)
+      VALUES (
+        NEW.student_id,
+        'perfect_attendance',
+        'Perfect Presence',
+        'Maintained a stellar attendance streak by marking present 5 times.'
+      )
+      ON CONFLICT DO NOTHING;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trigger_on_attendance_checkin ON public.attendance;
+CREATE TRIGGER trigger_on_attendance_checkin
+  AFTER INSERT OR UPDATE ON public.attendance
+  FOR EACH ROW EXECUTE FUNCTION public.on_attendance_checkin();
+
+CREATE OR REPLACE FUNCTION public.on_assignment_submit()
+RETURNS trigger AS $$
+DECLARE
+  v_submission_count INT;
+BEGIN
+  IF NEW.status = 'submitted' THEN
+    PERFORM public.add_student_exp(NEW.student_id, 50);
+
+    SELECT COUNT(*) INTO v_submission_count
+    FROM public.submissions
+    WHERE student_id = NEW.student_id;
+
+    IF v_submission_count = 1 THEN
+      INSERT INTO public.badges (student_id, badge_type, title, description)
+      VALUES (
+        NEW.student_id,
+        'assignment_hero',
+        'Assignment Hero',
+        'Successfully completed and submitted your first homework coursework assignment.'
+      )
+      ON CONFLICT DO NOTHING;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trigger_on_assignment_submit ON public.submissions;
+CREATE TRIGGER trigger_on_assignment_submit
+  AFTER INSERT OR UPDATE ON public.submissions
+  FOR EACH ROW EXECUTE FUNCTION public.on_assignment_submit();
+
+CREATE OR REPLACE FUNCTION public.on_high_mark_earned()
+RETURNS trigger AS $$
+DECLARE
+  v_max_marks INT;
+  v_percentage NUMERIC(5,2);
+BEGIN
+  SELECT max_marks INTO v_max_marks
+  FROM public.exams
+  WHERE id = NEW.exam_id;
+
+  IF v_max_marks > 0 THEN
+    v_percentage := (NEW.marks_obtained::numeric / v_max_marks::numeric) * 100;
+    
+    IF v_percentage >= 90.00 THEN
+      PERFORM public.add_student_exp(NEW.student_id, 100);
+
+      INSERT INTO public.badges (student_id, badge_type, title, description)
+      VALUES (
+        NEW.student_id,
+        'top_performer',
+        'Top Performer',
+        'Scored 90% or higher on an academic assessment exam.'
+      )
+      ON CONFLICT DO NOTHING;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trigger_on_high_mark_earned ON public.marks;
+CREATE TRIGGER trigger_on_high_mark_earned
+  AFTER INSERT OR UPDATE ON public.marks
+  FOR EACH ROW EXECUTE FUNCTION public.on_high_mark_earned();
+
+
+-- ==========================================
+-- EXTRA RLS POLICIES
+-- ==========================================
+
+DROP POLICY IF EXISTS "Students update own fees status" ON public.fees;
+CREATE POLICY "Students update own fees status" ON public.fees FOR UPDATE USING (student_id = auth.uid());
+
+
+

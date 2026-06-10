@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Menu, Search, Sun, Moon, Bell, LogOut } from 'lucide-react';
+import { Menu, Search, Sun, Moon, Bell, LogOut, Edit, X } from 'lucide-react';
 import type { Profile } from '../types';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 
 
 interface HeaderProps {
@@ -32,6 +34,52 @@ export const Header: React.FC<HeaderProps> = ({
   logout
 }) => {
   const navigate = useNavigate();
+  const { refreshProfile } = useAuth();
+
+  // Profile settings states
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [editFullName, setEditFullName] = useState('');
+  const [editAvatarUrl, setEditAvatarUrl] = useState('');
+  const [editQualification, setEditQualification] = useState('');
+  const [editExperience, setEditExperience] = useState('');
+  const [updatingProfile, setUpdatingProfile] = useState(false);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile) return;
+    setUpdatingProfile(true);
+
+    try {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
+          full_name: editFullName,
+          avatar_url: editAvatarUrl || null
+        })
+        .eq('id', profile.id);
+
+      if (profileError) throw profileError;
+
+      if (profile.role === 'teacher') {
+        const { error: teacherError } = await supabase
+          .from('teachers')
+          .update({
+            qualification: editQualification,
+            experience: editExperience
+          })
+          .eq('id', profile.id);
+        if (teacherError) throw teacherError;
+      }
+
+      await refreshProfile();
+      setShowProfileModal(false);
+    } catch (err: any) {
+      alert(`Failed to update profile: ${err.message}`);
+    } finally {
+      setUpdatingProfile(false);
+    }
+  };
+
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const handleNotificationClick = (id: string) => {
@@ -144,10 +192,29 @@ export const Header: React.FC<HeaderProps> = ({
         {/* User Card */}
         {profile && (
           <div className="flex items-center gap-3.5 pl-2 border-l border-white/5">
-            <div className="hidden lg:flex flex-col text-right text-xs">
-              <span className="font-semibold text-white truncate max-w-[120px]">{profile.full_name}</span>
+            <button
+              onClick={() => {
+                setEditFullName(profile.full_name);
+                setEditAvatarUrl(profile.avatar_url || '');
+                setShowProfileModal(true);
+                if (profile.role === 'teacher') {
+                  supabase.from('teachers').select('*').eq('id', profile.id).single().then(({ data }: any) => {
+                    if (data) {
+                      setEditQualification(data.qualification || '');
+                      setEditExperience(data.experience || '');
+                    }
+                  });
+                }
+              }}
+              className="hidden lg:flex flex-col text-right text-xs hover:opacity-80 transition cursor-pointer select-none text-left border-0 bg-transparent p-0"
+              title="Edit Profile Settings"
+            >
+              <span className="font-semibold text-white truncate max-w-[120px] flex items-center gap-1">
+                <span>{profile.full_name}</span>
+                <Edit size={10} className="text-gray-500 hover:text-white" />
+              </span>
               <span className="text-[10px] text-cyber-secondary font-medium tracking-wide uppercase">{profile.role}</span>
-            </div>
+            </button>
             
             {/* Logout Trigger */}
             <button
@@ -160,6 +227,81 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
       </div>
+
+      {/* Profile Settings Modal */}
+      {showProfileModal && profile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-sm bg-[#0c0d16] border border-white/10 rounded-xl overflow-hidden shadow-2xl relative text-left">
+            <div className="flex justify-between items-center px-5 py-3.5 border-b border-white/5 bg-white/2">
+              <h3 className="font-bold text-sm text-white uppercase tracking-wider">Profile Settings</h3>
+              <button onClick={() => setShowProfileModal(false)} className="text-gray-400 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProfile} className="p-5 space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-gray-400 block mb-1">Full Name</label>
+                <input
+                  type="text"
+                  required
+                  value={editFullName}
+                  onChange={(e) => setEditFullName(e.target.value)}
+                  className="w-full glass-input text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 block mb-1">Avatar Image URL (Optional)</label>
+                <input
+                  type="text"
+                  value={editAvatarUrl}
+                  onChange={(e) => setEditAvatarUrl(e.target.value)}
+                  placeholder="https://example.com/avatar.jpg"
+                  className="w-full glass-input text-xs"
+                />
+              </div>
+
+              {profile.role === 'teacher' && (
+                <>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 block mb-1">Qualifications</label>
+                    <input
+                      type="text"
+                      value={editQualification}
+                      onChange={(e) => setEditQualification(e.target.value)}
+                      placeholder="e.g. Master of Education"
+                      className="w-full glass-input text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 block mb-1">Experience</label>
+                    <input
+                      type="text"
+                      value={editExperience}
+                      onChange={(e) => setEditExperience(e.target.value)}
+                      placeholder="e.g. 5+ Years teaching"
+                      className="w-full glass-input text-xs"
+                    />
+                  </div>
+                </>
+              )}
+
+              <button
+                type="submit"
+                disabled={updatingProfile}
+                className="w-full glass-button-primary flex items-center justify-center gap-2 text-xs py-2.5 mt-6 font-semibold"
+              >
+                {updatingProfile ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <span>Save Profile Updates</span>
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </header>
   );
 };

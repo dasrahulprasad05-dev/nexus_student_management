@@ -13,6 +13,9 @@ export const Gradebook: React.FC = () => {
   const [editingCell, setEditingCell] = useState<{ studentId: string; examId: string } | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [showAddExam, setShowAddExam] = useState(false);
+  const [showBulkEntry, setShowBulkEntry] = useState(false);
+  const [bulkExamId, setBulkExamId] = useState('');
+  const [bulkMarks, setBulkMarks] = useState<Record<string, string>>({});
 
   // New exam form states
   const [newExamTitle, setNewExamTitle] = useState('');
@@ -107,6 +110,34 @@ export const Gradebook: React.FC = () => {
     }
   });
 
+  const bulkUpdateMarksMutation = useMutation({
+    mutationFn: async (marksList: { studentId: string; examId: string; score: number }[]) => {
+      const records = marksList.map(m => {
+        const existing = marks?.find((r: any) => r.student_id === m.studentId && r.exam_id === m.examId);
+        return {
+          id: existing?.id || undefined,
+          student_id: m.studentId,
+          exam_id: m.examId,
+          marks_obtained: m.score
+        };
+      });
+
+      const { data, error } = await supabase
+        .from('marks')
+        .upsert(records, { onConflict: 'student_id,exam_id' })
+        .select();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['gradebook-marks', selectedClassId] });
+      setShowBulkEntry(false);
+      setBulkMarks({});
+      setBulkExamId('');
+    }
+  });
+
   // Mutation to create new exam column
   const createExamMutation = useMutation({
     mutationFn: async () => {
@@ -189,13 +220,34 @@ export const Gradebook: React.FC = () => {
         </div>
 
         {(profile?.role === 'admin' || profile?.role === 'teacher') && (
-          <button
-            onClick={() => setShowAddExam(true)}
-            className="glass-button-primary flex items-center justify-center gap-2 text-xs py-2 bg-gradient-to-r from-cyber-primary to-cyber-secondary shadow-[0_0_15px_rgba(139,92,246,0.2)]"
-          >
-            <FilePlus size={16} />
-            <span>Create New Exam Column</span>
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                if (exams && exams.length > 0) {
+                  const firstExamId = exams[0].id;
+                  setBulkExamId(firstExamId);
+                  const initialMarks: Record<string, string> = {};
+                  students?.forEach((stu: any) => {
+                    const score = getScore(stu.id, firstExamId);
+                    initialMarks[stu.id] = score !== null ? String(score) : '';
+                  });
+                  setBulkMarks(initialMarks);
+                }
+                setShowBulkEntry(true);
+              }}
+              disabled={!exams || exams.length === 0}
+              className="glass-button-primary flex items-center justify-center gap-2 text-xs py-2 border-cyber-secondary/35 text-cyber-secondary bg-transparent hover:bg-cyber-secondary/10 shrink-0"
+            >
+              <span>Bulk Enter Grades</span>
+            </button>
+            <button
+              onClick={() => setShowAddExam(true)}
+              className="glass-button-primary flex items-center justify-center gap-2 text-xs py-2 bg-gradient-to-r from-cyber-primary to-cyber-secondary shadow-[0_0_15px_rgba(139,92,246,0.2)] shrink-0"
+            >
+              <FilePlus size={16} />
+              <span>Create New Exam Column</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -393,6 +445,106 @@ export const Gradebook: React.FC = () => {
                   )}
                 </button>
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {showBulkEntry && bulkExamId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-lg bg-[#0c0d16] border border-white/10 rounded-xl overflow-hidden shadow-2xl relative max-h-[90vh] flex flex-col"
+            >
+              <div className="flex justify-between items-center px-5 py-3.5 border-b border-white/5 bg-white/2 shrink-0">
+                <h3 className="font-bold text-sm text-white uppercase tracking-wider">Bulk Grade Entry</h3>
+                <button onClick={() => setShowBulkEntry(false)} className="text-gray-400 hover:text-white">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-5 border-b border-white/5 bg-white/2 shrink-0">
+                <label className="text-xs font-semibold text-gray-400 block mb-1">Select Exam Column</label>
+                <select
+                  value={bulkExamId}
+                  onChange={(e) => {
+                    const selectedExamId = e.target.value;
+                    setBulkExamId(selectedExamId);
+                    const initialMarks: Record<string, string> = {};
+                    students?.forEach((stu: any) => {
+                      const score = getScore(stu.id, selectedExamId);
+                      initialMarks[stu.id] = score !== null ? String(score) : '';
+                    });
+                    setBulkMarks(initialMarks);
+                  }}
+                  className="w-full glass-input text-xs bg-[#0d0e16]"
+                >
+                  {exams?.map((exam: any) => (
+                    <option key={exam.id} value={exam.id}>
+                      {exam.title} ({exam.subject_name} - Max: {exam.max_marks})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                {students?.map((stu: any) => {
+                  const examMaxMarks = exams?.find((e: any) => e.id === bulkExamId)?.max_marks || 100;
+                  return (
+                    <div key={stu.id} className="flex items-center justify-between p-2 rounded-lg bg-white/2 border border-white/5">
+                      <div>
+                        <span className="font-semibold text-xs text-white block">{stu.profiles?.full_name}</span>
+                        <span className="text-[10px] text-gray-500 block">Roll: {stu.roll_number}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          max={examMaxMarks}
+                          placeholder="Marks"
+                          value={bulkMarks[stu.id] || ''}
+                          onChange={(e) => {
+                            setBulkMarks(prev => ({ ...prev, [stu.id]: e.target.value }));
+                          }}
+                          className="w-20 glass-input text-center text-xs py-1 px-2"
+                        />
+                        <span className="text-[10px] text-gray-500">/ {examMaxMarks}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="p-5 border-t border-white/5 bg-white/2 shrink-0">
+                <button
+                  onClick={() => {
+                    const list: { studentId: string; examId: string; score: number }[] = [];
+                    for (const stuId of Object.keys(bulkMarks)) {
+                      const val = bulkMarks[stuId];
+                      if (val.trim() !== '') {
+                        const score = Number(val);
+                        if (!isNaN(score) && score >= 0) {
+                          list.push({
+                            studentId: stuId,
+                            examId: bulkExamId,
+                            score
+                          });
+                        }
+                      }
+                    }
+                    bulkUpdateMarksMutation.mutate(list);
+                  }}
+                  disabled={bulkUpdateMarksMutation.isPending}
+                  className="w-full glass-button-primary flex items-center justify-center gap-2 text-xs py-2.5 font-semibold"
+                >
+                  {bulkUpdateMarksMutation.isPending ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <span>Save Roster Grades</span>
+                  )}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

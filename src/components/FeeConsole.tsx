@@ -1,11 +1,61 @@
-import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
-import { CreditCard, Printer, DollarSign } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { CreditCard, Printer, DollarSign, X, Lock, Check } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import jsPDF from 'jspdf';
+import confetti from 'canvas-confetti';
 
 export const FeeConsole: React.FC = () => {
+  const queryClient = useQueryClient();
+
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [payingInvoice, setPayingInvoice] = useState<any | null>(null);
+
+  // Stripe Mock Card Form States
+  const [cardNumber, setCardNumber] = useState('4242 •••• •••• 4242');
+  const [cardExpiry, setCardExpiry] = useState('12/28');
+  const [cardCvc, setCardCvc] = useState('422');
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
+
+  const payInvoiceMutation = useMutation({
+    mutationFn: async (invoiceId: string) => {
+      const { data, error } = await supabase
+        .from('fees')
+        .update({
+          status: 'paid',
+          paid_at: new Date().toISOString()
+        })
+        .eq('id', invoiceId)
+        .select();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fees-invoices-list'] });
+      confetti({
+        particleCount: 100,
+        spread: 70
+      });
+      setShowPayModal(false);
+      setPayingInvoice(null);
+      setPaymentProcessing(false);
+    },
+    onError: (err) => {
+      alert(`Payment failed: ${err.message}`);
+      setPaymentProcessing(false);
+    }
+  });
+
+  const handleProcessPayment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payingInvoice) return;
+    setPaymentProcessing(true);
+    setTimeout(() => {
+      payInvoiceMutation.mutate(payingInvoice.id);
+    }, 1800);
+  };
+
   // Query all invoices
   const { data: invoices, isLoading } = useQuery({
     queryKey: ['fees-invoices-list'],
@@ -208,18 +258,28 @@ export const FeeConsole: React.FC = () => {
                       </span>
                     </td>
                     <td className="p-4 text-center">
-                      <button
-                        onClick={() => printReceipt(inv)}
-                        disabled={inv.status !== 'paid'}
-                        className={`p-2 rounded-lg border text-xs transition active:scale-95 ${
-                          inv.status === 'paid' 
-                            ? 'border-cyber-primary/20 text-cyber-secondary hover:bg-cyber-primary/10' 
-                            : 'border-transparent text-gray-600 cursor-not-allowed'
-                        }`}
-                        title={inv.status === 'paid' ? 'Print payment receipt' : 'Invoice unpaid'}
-                      >
-                        <Printer size={14} />
-                      </button>
+                      <div className="flex justify-center gap-1.5">
+                        {inv.status === 'paid' ? (
+                          <button
+                            onClick={() => printReceipt(inv)}
+                            className="p-2 rounded-lg border border-cyber-primary/20 text-cyber-secondary hover:bg-cyber-primary/10 text-xs transition active:scale-95 cursor-pointer"
+                            title="Print payment receipt"
+                          >
+                            <Printer size={14} />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setPayingInvoice(inv);
+                              setShowPayModal(true);
+                            }}
+                            className="p-2 rounded-lg border border-cyber-warning/20 text-cyber-warning hover:bg-cyber-warning/10 text-xs transition active:scale-95 cursor-pointer"
+                            title="Pay Invoice online"
+                          >
+                            <CreditCard size={14} />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -228,6 +288,122 @@ export const FeeConsole: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Stripe Payment Checkout Simulator */}
+      <AnimatePresence>
+        {showPayModal && payingInvoice && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-sm bg-[#0c0d16] border border-white/10 rounded-xl overflow-hidden shadow-2xl relative text-left animate-fade-in"
+            >
+              <div className="flex justify-between items-center px-5 py-3.5 border-b border-white/5 bg-white/2">
+                <div className="flex items-center gap-2">
+                  <Lock size={14} className="text-cyber-success animate-pulse" />
+                  <span className="font-bold text-xs text-white uppercase tracking-wider">Stripe Secure Checkout</span>
+                </div>
+                <button 
+                  onClick={() => {
+                    if (!paymentProcessing) {
+                      setShowPayModal(false);
+                      setPayingInvoice(null);
+                    }
+                  }} 
+                  disabled={paymentProcessing}
+                  className="text-gray-400 hover:text-white disabled:opacity-50"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleProcessPayment} className="p-5 space-y-4 text-xs">
+                {/* Invoice Brief */}
+                <div className="bg-white/2 p-3 rounded-lg border border-white/5 space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">Billing Item</span>
+                  <span className="font-semibold text-white block text-xs">{payingInvoice.description}</span>
+                  <div className="flex justify-between items-center mt-2.5 pt-2 border-t border-white/5">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase">Amount Due</span>
+                    <span className="text-sm font-extrabold text-cyber-secondary font-mono">${Number(payingInvoice.amount).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Card details */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[9px] uppercase font-bold text-gray-500 block mb-1">Card Number</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        required
+                        value={cardNumber}
+                        onChange={(e) => setCardNumber(e.target.value)}
+                        placeholder="4242 4242 4242 4242"
+                        disabled={paymentProcessing}
+                        className="w-full glass-input text-xs pl-8 font-mono"
+                      />
+                      <CreditCard size={14} className="absolute left-2.5 top-2.5 text-gray-500" />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[9px] uppercase font-bold text-gray-500 block mb-1">EXPIRATION</label>
+                      <input
+                        type="text"
+                        required
+                        value={cardExpiry}
+                        onChange={(e) => setCardExpiry(e.target.value)}
+                        placeholder="MM/YY"
+                        disabled={paymentProcessing}
+                        className="w-full glass-input text-xs font-mono text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase font-bold text-gray-500 block mb-1">CVC CODE</label>
+                      <input
+                        type="password"
+                        maxLength={4}
+                        required
+                        value={cardCvc}
+                        onChange={(e) => setCardCvc(e.target.value)}
+                        placeholder="123"
+                        disabled={paymentProcessing}
+                        className="w-full glass-input text-xs font-mono text-center"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* SSL info label */}
+                <div className="text-[9px] text-gray-500 flex items-center justify-center gap-1">
+                  <Lock size={10} className="text-cyber-success" />
+                  <span>Your credentials are encrypted & secured via Stripe Sandbox protocols.</span>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={paymentProcessing}
+                  className="w-full glass-button-primary flex items-center justify-center gap-2 text-xs py-2.5 mt-6 font-semibold"
+                >
+                  {paymentProcessing ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Authorizing transaction...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Check size={14} />
+                      <span>Pay ${Number(payingInvoice.amount).toFixed(2)} USD</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

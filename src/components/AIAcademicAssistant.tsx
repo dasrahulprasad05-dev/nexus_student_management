@@ -2,9 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import { Bot, Send, User, BrainCircuit, RefreshCw } from 'lucide-react';
-import { motion } from 'framer-motion';
-
+import { Bot, Send, User, BrainCircuit, RefreshCw, Settings, Eye, EyeOff } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export const AIAcademicAssistant: React.FC = () => {
   const { profile } = useAuth();
@@ -15,6 +14,12 @@ export const AIAcademicAssistant: React.FC = () => {
     { sender: 'ai', text: 'Hello! I am your Nexus AI Academic Assistant. I analyze your database telemetry (attendance, grades, and quest EXP levels) to help you improve. Ask me "How can I improve my grades?" or "What is my academic risk status?"', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
   ]);
   const [isTyping, setIsTyping] = useState(false);
+
+  // Settings state for Gemini API key
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('nexus_gemini_api_key') || (import.meta.env.VITE_GEMINI_API_KEY as string) || '');
+  const [tempApiKey, setTempApiKey] = useState(apiKey);
+  const [showKey, setShowKey] = useState(false);
 
   // Auto-scroll chat
   const scrollToBottom = () => {
@@ -56,7 +61,7 @@ export const AIAcademicAssistant: React.FC = () => {
     enabled: !!profile && profile.role === 'student'
   });
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
 
@@ -68,65 +73,88 @@ export const AIAcademicAssistant: React.FC = () => {
     setInput('');
     setIsTyping(true);
 
-    // Formulate answer based on queried database
-    setTimeout(() => {
-      let aiText = "I have analyzed your request, but I can only provide insights based on student profiles. Please verify you are logged in as a Student to inspect exam metrics.";
+    if (profile?.role !== 'student') {
+      setTimeout(() => {
+        setMessages(prev => [...prev, {
+          sender: 'ai',
+          text: "I have analyzed your request, but I can only provide insights based on student profiles. Please verify you are logged in as a Student to inspect exam metrics.",
+          time: timeString
+        }]);
+        setIsTyping(false);
+      }, 1000);
+      return;
+    }
 
-      if (profile?.role === 'student' && records) {
-        const queryLower = userText.toLowerCase();
-        
-        // Dynamic stats calculations
-        const gpa = records.student?.gpa || 0.0;
-        const att = records.attRate;
-        const subjectScores = records.marks.reduce((acc: any, mark: any) => {
-          const subName = mark.exams?.subject_name;
-          const pct = Math.round((Number(mark.marks_obtained) / Number(mark.exams?.max_marks)) * 100);
-          if (!acc[subName]) acc[subName] = [];
-          acc[subName].push(pct);
-          return acc;
-        }, {});
+    if (!apiKey) {
+      setTimeout(() => {
+        setMessages(prev => [...prev, {
+          sender: 'ai',
+          text: 'Gemini API key is not configured. Please click the Settings gear icon in the top right of this chat to configure your API key, or define `VITE_GEMINI_API_KEY` in your `.env` file.',
+          time: timeString
+        }]);
+        setIsTyping(false);
+      }, 1000);
+      return;
+    }
 
-        const averages = Object.keys(subjectScores).map(sub => {
-          const scores = subjectScores[sub];
-          const avg = Math.round(scores.reduce((sum: number, s: number) => sum + s, 0) / scores.length);
-          return { subject: sub, average: avg };
-        });
+    // Dynamic stats calculations
+    const gpa = records?.student?.gpa || 0.0;
+    const att = records?.attRate || 100;
+    
+    const prompt = `You are the Nexus AI Academic Assistant, a friendly and supportive virtual tutor for a student.
+Here is the student's database telemetry:
+- Full Name: ${profile?.full_name}
+- Email: ${profile?.email}
+- Class: ${records?.student?.classes?.grade_name || 'N/A'} - ${records?.student?.classes?.section || 'N/A'}
+- GPA: ${gpa.toFixed(2)} / 4.0
+- Attendance Rate: ${att}%
+- Exam Marks: ${JSON.stringify(records?.marks?.map((m: any) => ({
+    subject: m.exams?.subject_name,
+    exam_title: m.exams?.title,
+    exam_type: m.exams?.exam_type,
+    marks_obtained: m.marks_obtained,
+    max_marks: m.exams?.max_marks,
+    percentage: Math.round((Number(m.marks_obtained) / Number(m.exams?.max_marks)) * 100)
+  })) || [])}
 
-        // Find weak and strong subjects
-        const sortedAverages = [...averages].sort((a, b) => a.average - b.average);
-        const weakSubject = sortedAverages[0];
-        const strongSubject = sortedAverages[sortedAverages.length - 1];
+The student asks: "${userText}"
 
-        if (queryLower.includes('improve') || queryLower.includes('grade') || queryLower.includes('marks')) {
-          if (weakSubject) {
-            aiText = `Based on your grade logs, your weakest area is **${weakSubject.subject}** with an average score of **${weakSubject.average}%**. To improve:
-1. Schedule a doubt session with your teacher.
-2. Review past homework feedbacks in the Assignment Hub.
-3. Your attendance is at **${att}%**. Maintain daily check-ins to make sure you do not miss core lessons!`;
-          } else {
-            aiText = `You do not have any exam marks logged in the system yet. Once your teacher posts midterm or unit exam grades in the Gradebook console, I will isolate your weaknesses and compile customized revision guidelines!`;
-          }
-        } else if (queryLower.includes('risk') || queryLower.includes('performance') || queryLower.includes('status')) {
-          const riskLevel = (att < 80 || gpa < 2.5) ? '🔴 At Risk (High)' : (att < 90 || gpa < 3.2) ? '🟡 Warning (Mid)' : '🟢 Safe (Low)';
-          aiText = `My performance prediction algorithms estimate your current risk index as: **${riskLevel}**. 
-* **Cumulative GPA**: ${gpa.toFixed(2)}
-* **Attendance Rate**: ${att}%
-* **Strongest subject**: ${strongSubject ? `${strongSubject.subject} (${strongSubject.average}%)` : 'N/A'}
-* **Next quest targets**: Complete your pending assignments to earn +50 EXP points and increase your Level!`;
-        } else if (queryLower.includes('gpa') || queryLower.includes('predict') || queryLower.includes('expected')) {
-          const predictedGPA = Math.min(4.0, gpa + (att > 95 ? 0.05 : -0.1)).toFixed(2);
-          aiText = `Based on your current attendance trend of **${att}%** and marks averages, your expected end-of-term GPA is predicted to be **${predictedGPA}** (current GPA: ${gpa.toFixed(2)}). Keep checking in daily to maximize your academic progress!`;
-        } else {
-          aiText = `I heard you! For student portfolio insights, you can try asking me:
-* "How can I improve my grades?"
-* "What is my academic risk status?"
-* "Predict my expected GPA"`;
-        }
+Provide a professional, clear, and encouraging response based on their data. Keep it highly relevant and brief (under 150 words). Provide actionable study recommendations.`;
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: prompt
+            }]
+          }]
+        })
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error?.message || `HTTP ${response.status}`);
       }
-
+      
+      const aiText = resData.candidates?.[0]?.content?.parts?.[0]?.text || "I apologize, I could not process your query at this moment.";
       setMessages(prev => [...prev, { sender: 'ai', text: aiText, time: timeString }]);
+    } catch (err: any) {
+      setMessages(prev => [...prev, { sender: 'ai', text: `API Connection Error: ${err.message}. Please verify your API Key and network connection.`, time: timeString }]);
+    } finally {
       setIsTyping(false);
-    }, 1500);
+    }
+  };
+
+  const handleSaveApiKey = (e: React.FormEvent) => {
+    e.preventDefault();
+    localStorage.setItem('nexus_gemini_api_key', tempApiKey.trim());
+    setApiKey(tempApiKey.trim());
+    setShowSettings(false);
   };
 
   return (
@@ -143,17 +171,78 @@ export const AIAcademicAssistant: React.FC = () => {
             <span className="text-[10px] text-cyber-secondary font-medium tracking-wider uppercase block">Database telemetry analysis</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="flex h-2 w-2 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyber-success opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-cyber-success"></span>
-          </span>
-          <span className="text-[10px] font-bold text-gray-500 uppercase">Interactive Online</span>
+        <div className="flex items-center gap-3">
+          {/* Settings button */}
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="p-1.5 rounded-lg border border-white/5 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 transition"
+            title="Configure Gemini API Key"
+          >
+            <Settings size={16} />
+          </button>
+          
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyber-success opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyber-success"></span>
+            </span>
+            <span className="text-[10px] font-bold text-gray-500 uppercase">Interactive Online</span>
+          </div>
         </div>
       </div>
 
       {/* Messages Scroll Console */}
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      <div className="flex-1 overflow-y-auto p-5 space-y-4 relative animate-fade-in">
+        
+        {/* Settings Drawer overlay */}
+        <AnimatePresence>
+          {showSettings && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="absolute inset-x-0 top-0 bg-[#0c0d16]/95 border-b border-white/10 p-5 z-10 text-xs text-gray-300"
+            >
+              <form onSubmit={handleSaveApiKey} className="space-y-3">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="font-bold text-white uppercase tracking-wider">Configure Gemini API Key</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSettings(false)}
+                    className="text-gray-500 hover:text-white"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p className="text-[10px] text-gray-400 leading-relaxed">
+                  Provide your Gemini API key to query the assistant. Keys are saved locally in your browser's secure storage.
+                </p>
+                <div className="flex gap-2 items-center">
+                  <div className="relative flex-1">
+                    <input
+                      type={showKey ? 'text' : 'password'}
+                      value={tempApiKey}
+                      onChange={(e) => setTempApiKey(e.target.value)}
+                      placeholder="AIzaSy..."
+                      className="w-full glass-input text-xs pr-8"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowKey(!showKey)}
+                      className="absolute right-2.5 top-2.5 text-gray-500 hover:text-white"
+                    >
+                      {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                  <button type="submit" className="glass-button-primary py-2 px-4 text-xs font-semibold shrink-0">
+                    Save Key
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {messages.map((msg, index) => {
           const isAI = msg.sender === 'ai';
           return (
@@ -176,7 +265,7 @@ export const AIAcademicAssistant: React.FC = () => {
                   ? 'bg-[#12131e]/90 border-white/5 text-gray-300 rounded-tl-none' 
                   : 'bg-gradient-to-r from-cyber-primary/80 to-cyber-secondary/80 border-transparent text-white rounded-tr-none shadow-md'
               }`}>
-                {msg.text}
+                <div className="whitespace-pre-line">{msg.text}</div>
                 <span className="text-[9px] text-gray-500 block text-right mt-1.5 font-mono">{msg.time}</span>
               </div>
             </motion.div>
@@ -198,12 +287,14 @@ export const AIAcademicAssistant: React.FC = () => {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask AI: 'How can I improve my grades?' or 'Predict my GPA'..."
+          placeholder={apiKey ? "Ask AI: 'How can I improve my grades?' or 'Predict my GPA'..." : "Configure your API key in settings above to begin..."}
+          disabled={!apiKey && profile?.role === 'student'}
           className="flex-1 glass-input text-xs"
         />
         <button
           type="submit"
-          className="glass-button-primary py-2 px-4 flex items-center justify-center gap-1.5 self-center shadow-[0_0_10px_rgba(139,92,246,0.2)] shrink-0"
+          disabled={!apiKey && profile?.role === 'student'}
+          className="glass-button-primary py-2 px-4 flex items-center justify-center gap-1.5 self-center shadow-[0_0_10px_rgba(139,92,246,0.2)] shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <span>Consult</span>
           <Send size={12} />

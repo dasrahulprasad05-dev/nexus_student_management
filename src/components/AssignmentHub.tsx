@@ -21,6 +21,8 @@ export const AssignmentHub: React.FC = () => {
   const [newDesc, setNewDesc] = useState('');
   const [newDeadline, setNewDeadline] = useState('');
   const [newSubject, setNewSubject] = useState('Physics');
+  const [newAssignmentFile, setNewAssignmentFile] = useState<File | null>(null);
+  const [uploadingAssignmentId, setUploadingAssignmentId] = useState<string | null>(null);
 
   // Fetch classes
   const { data: classes } = useQuery({
@@ -92,6 +94,17 @@ export const AssignmentHub: React.FC = () => {
   // Mutation to publish assignment
   const createAssignmentMutation = useMutation({
     mutationFn: async () => {
+      let fileUrl = '';
+      if (newAssignmentFile) {
+        const fileName = `${Date.now()}_${newAssignmentFile.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from('assignments')
+          .upload(`files/${fileName}`, newAssignmentFile);
+        if (uploadError) throw uploadError;
+
+        fileUrl = supabase.storage.from('assignments').getPublicUrl(`files/${fileName}`).data.publicUrl;
+      }
+
       const { data, error } = await supabase
         .from('assignments')
         .insert({
@@ -100,6 +113,7 @@ export const AssignmentHub: React.FC = () => {
           description: newDesc,
           deadline: newDeadline,
           subject_name: newSubject,
+          file_url: fileUrl || null,
           created_by: profile?.id
         })
         .select();
@@ -112,18 +126,27 @@ export const AssignmentHub: React.FC = () => {
       setNewTitle('');
       setNewDesc('');
       setNewDeadline('');
+      setNewAssignmentFile(null);
     }
   });
 
-  // Mutation to submit assignment (mock file attachment upload)
+  // Mutation to submit assignment
   const submitAssignmentMutation = useMutation({
-    mutationFn: async (assignmentId: string) => {
+    mutationFn: async ({ assignmentId, file }: { assignmentId: string; file: File }) => {
+      const fileName = `${Date.now()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from('submissions')
+        .upload(`${profile?.id}/${assignmentId}/${fileName}`, file);
+      if (uploadError) throw uploadError;
+
+      const fileUrl = supabase.storage.from('submissions').getPublicUrl(`${profile?.id}/${assignmentId}/${fileName}`).data.publicUrl;
+
       const { data, error } = await supabase
         .from('submissions')
         .insert({
           assignment_id: assignmentId,
           student_id: profile?.id,
-          file_url: 'https://storage.nexus.edu/homework_uploads/dummy.pdf',
+          file_url: fileUrl,
           status: 'submitted'
         })
         .select();
@@ -137,9 +160,13 @@ export const AssignmentHub: React.FC = () => {
         spread: 60,
         colors: ['#8b5cf6', '#06b6d4', '#ec4899']
       });
+      setUploadingAssignmentId(null);
+    },
+    onError: (err) => {
+      alert(`Submission failed: ${err.message}`);
+      setUploadingAssignmentId(null);
     }
   });
-
 
   // Mutation to grade submittal
   const gradeSubmissionMutation = useMutation({
@@ -242,6 +269,16 @@ export const AssignmentHub: React.FC = () => {
                         <div className="flex items-center gap-3.5 text-[9px] text-gray-500 mt-2">
                           <span className="text-cyber-secondary font-semibold uppercase">{assg.subject_name}</span>
                           <span>Deadline: {new Date(assg.deadline).toLocaleDateString()}</span>
+                          {assg.file_url && (
+                            <a
+                              href={assg.file_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-cyber-primary font-bold hover:underline flex items-center gap-0.5"
+                            >
+                              Download Resource
+                            </a>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -304,6 +341,21 @@ export const AssignmentHub: React.FC = () => {
                 className="mt-6 pt-4 border-t border-white/5 space-y-3 text-xs"
               >
                 <h4 className="font-semibold text-xs text-white uppercase tracking-wider mb-2.5">Grade Submission</h4>
+                
+                {submissions?.find((s: any) => s.id === activeSubmissionId)?.file_url && (
+                  <div className="p-2.5 bg-white/2 border border-white/5 rounded-lg flex items-center justify-between gap-2 mb-2">
+                    <span className="text-[10px] text-gray-400">Student Submission:</span>
+                    <a
+                      href={submissions.find((s: any) => s.id === activeSubmissionId).file_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-cyber-secondary hover:underline font-bold text-[10px] flex items-center gap-1"
+                    >
+                      <FileText size={12} className="text-cyber-primary" />
+                      <span>View Uploaded File</span>
+                    </a>
+                  </div>
+                )}
                 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -389,16 +441,43 @@ export const AssignmentHub: React.FC = () => {
                       <div className="flex justify-between items-center border-t border-white/5 pt-2.5 mt-2.5">
                         <span className="text-[9px] text-gray-500">Due: {new Date(assg.deadline).toLocaleDateString()}</span>
                         {!subStatus ? (
-                          <button
-                            onClick={() => submitAssignmentMutation.mutate(assg.id)}
-                            disabled={submitAssignmentMutation.isPending}
-                            className="glass-button-primary text-[10px] py-1 px-3 flex items-center gap-1 shadow-none"
-                          >
-                            <Upload size={10} />
-                            <span>Submit Homework</span>
-                          </button>
+                          <div className="flex flex-col items-end gap-2">
+                            <input
+                              type="file"
+                              id={`file-input-${assg.id}`}
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  submitAssignmentMutation.mutate({ assignmentId: assg.id, file });
+                                }
+                              }}
+                            />
+                            <label
+                              htmlFor={`file-input-${assg.id}`}
+                              className={`glass-button-primary text-[10px] py-1 px-3 flex items-center gap-1 shadow-none cursor-pointer ${
+                                submitAssignmentMutation.isPending && uploadingAssignmentId === assg.id ? 'opacity-50 pointer-events-none' : ''
+                              }`}
+                              onClick={() => setUploadingAssignmentId(assg.id)}
+                            >
+                              <Upload size={10} />
+                              <span>{submitAssignmentMutation.isPending && uploadingAssignmentId === assg.id ? 'Uploading...' : 'Upload & Submit'}</span>
+                            </label>
+                          </div>
                         ) : (
-                          <span className="text-[10px] font-semibold text-cyber-success">Submitted</span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[10px] font-semibold text-cyber-success">Submitted</span>
+                            {subStatus.file_url && (
+                              <a
+                                href={subStatus.file_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[9px] text-cyber-secondary hover:underline flex items-center gap-0.5"
+                              >
+                                View Attachment
+                              </a>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -501,6 +580,15 @@ export const AssignmentHub: React.FC = () => {
                       className="w-full glass-input text-xs"
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-400 block mb-1">Attachment File (Optional)</label>
+                  <input
+                    type="file"
+                    onChange={(e) => setNewAssignmentFile(e.target.files?.[0] || null)}
+                    className="w-full text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-cyber-primary/10 file:text-cyber-secondary hover:file:bg-cyber-primary/20 cursor-pointer"
+                  />
                 </div>
 
                 <button

@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { QrCode, CheckCircle, Users, Scan } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 
 
 export const AttendanceTracker: React.FC = () => {
@@ -97,28 +98,85 @@ export const AttendanceTracker: React.FC = () => {
     }
   });
 
-  // QR Scan submit for student
-  const handleQRScanSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const logBulkAttendanceMutation = useMutation({
+    mutationFn: async (status: 'present' | 'absent' | 'late') => {
+      if (!students || students.length === 0) return;
+      const records = students.map((stu: any) => ({
+        student_id: stu.id,
+        class_id: selectedClassId,
+        date: selectedDate,
+        status,
+        method: 'manual',
+        marked_by: profile?.id
+      }));
+      const { data, error } = await supabase
+        .from('attendance')
+        .upsert(records, { onConflict: 'student_id,date' })
+        .select();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance-logs', selectedClassId, selectedDate] });
+      confetti({
+        particleCount: 60,
+        spread: 50
+      });
+    }
+  });
+
+  // Real QR Code scanner lifecycle
+  useEffect(() => {
+    let scanner: Html5QrcodeScanner | null = null;
+    if (showScanner && !scanSuccess) {
+      const timer = setTimeout(() => {
+        const container = document.getElementById('qr-reader-container');
+        if (container) {
+          scanner = new Html5QrcodeScanner(
+            'qr-reader-container',
+            { fps: 10, qrbox: { width: 200, height: 200 } },
+            false
+          );
+          scanner.render(
+            (decodedText) => {
+              handleQRCheckIn(decodedText);
+              if (scanner) {
+                scanner.clear().catch(err => console.error("Failed to clear scanner on scan", err));
+              }
+            },
+            () => {
+              // Ignore scanning errors
+            }
+          );
+        }
+      }, 300);
+
+      return () => {
+        clearTimeout(timer);
+        if (scanner) {
+          scanner.clear().catch(err => console.error("Failed to clear scanner on cleanup", err));
+        }
+      };
+    }
+  }, [showScanner, scanSuccess]);
+
+  const handleQRCheckIn = async (token: string) => {
     if (!profile) return;
-    
     try {
-      // Find class linked to the scan token
-      // For demo simulation, any input token matching 'CLASS10A' or a class UUID works
-      const targetClassId = qrTokenInput.trim();
+      const targetClassId = token.trim() || 'c0000000-0000-0000-0000-00000000010a'; // Fallback to Class 10-A
       
       const { error } = await supabase
         .from('attendance')
         .insert({
           student_id: profile.id,
-          class_id: targetClassId || 'c0000000-0000-0000-0000-00000000010a', // Fallback to Class 10-A
+          class_id: targetClassId,
           date: new Date().toISOString().split('T')[0],
           status: 'present',
           method: 'qr',
           marked_by: profile.id
         });
 
-      if (error && error.code !== '23505') { // Ignore duplicate entries if already present
+      if (error && error.code !== '23505') { // Ignore duplicate entries
         alert(`Scan Error: ${error.message}`);
       } else {
         setScanSuccess(true);
@@ -136,6 +194,11 @@ export const AttendanceTracker: React.FC = () => {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleQRScanSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleQRCheckIn(qrTokenInput);
   };
 
   const getStudentStatus = (studentId: string) => {
@@ -208,20 +271,8 @@ export const AttendanceTracker: React.FC = () => {
               
               {!scanSuccess ? (
                 <div className="space-y-5">
-                  <h3 className="font-bold text-sm text-white uppercase tracking-wider">PORTAL CAMERA SIMULATOR</h3>
-                  
-                  {/* Camera Screen Graphic */}
-                  <div className="h-44 bg-black/40 border border-dashed border-cyber-secondary/40 rounded-xl relative flex items-center justify-center overflow-hidden">
-                    <div className="absolute top-4 left-4 w-4 h-4 border-t-2 border-l-2 border-cyber-secondary" />
-                    <div className="absolute top-4 right-4 w-4 h-4 border-t-2 border-r-2 border-cyber-secondary" />
-                    <div className="absolute bottom-4 left-4 w-4 h-4 border-b-2 border-l-2 border-cyber-secondary" />
-                    <div className="absolute bottom-4 right-4 w-4 h-4 border-b-2 border-r-2 border-cyber-secondary" />
-                    
-                    {/* Glowing scanning laser line */}
-                    <div className="absolute left-0 w-full h-[1px] bg-cyber-secondary shadow-[0_0_8px_rgba(6,182,212,0.6)] animate-pulse" style={{ top: '50%' }} />
-
-                    <QrCode size={42} className="text-white/20 animate-spin" style={{ animationDuration: '8s' }} />
-                  </div>
+                  <h3 className="font-bold text-sm text-white uppercase tracking-wider">PORTAL QR SCANNER</h3>
+                  <div id="qr-reader-container" className="w-full max-w-sm mx-auto overflow-hidden rounded-xl border border-white/5 bg-black/40 text-left" />
 
                   <form onSubmit={handleQRScanSubmit} className="space-y-3">
                     <label className="text-left text-[10px] uppercase font-bold text-gray-500 block mb-1">Enter Code Token</label>
@@ -289,14 +340,43 @@ export const AttendanceTracker: React.FC = () => {
 
           {/* Student attendance register sheet */}
           <div className="glass-card rounded-xl border border-white/5 overflow-hidden shadow-lg">
-            <div className="px-5 py-4 border-b border-white/5 bg-white/2 flex justify-between items-center">
+            <div className="px-5 py-4 border-b border-white/5 bg-white/2 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
               <span className="font-bold text-xs uppercase text-white tracking-wider flex items-center gap-1.5">
                 <Users size={16} className="text-cyber-primary" />
                 <span>Class Roster ({students?.length || 0} Students)</span>
               </span>
-              <span className="text-[10px] text-gray-500 font-semibold bg-white/5 border border-white/5 px-2 py-0.5 rounded">
-                Date: {selectedDate}
-              </span>
+              
+              <div className="flex flex-wrap items-center gap-2">
+                {students && students.length > 0 && (
+                  <div className="flex items-center gap-1.5 border-r border-white/10 pr-2">
+                    <span className="text-[9px] uppercase font-bold text-gray-500">Mark All:</span>
+                    <button
+                      onClick={() => logBulkAttendanceMutation.mutate('present')}
+                      disabled={logBulkAttendanceMutation.isPending}
+                      className="px-2 py-1 bg-cyber-success/10 border border-cyber-success/20 hover:bg-cyber-success/20 text-cyber-success rounded text-[9px] font-bold uppercase transition"
+                    >
+                      Present
+                    </button>
+                    <button
+                      onClick={() => logBulkAttendanceMutation.mutate('late')}
+                      disabled={logBulkAttendanceMutation.isPending}
+                      className="px-2 py-1 bg-cyber-warning/10 border border-cyber-warning/20 hover:bg-cyber-warning/20 text-cyber-warning rounded text-[9px] font-bold uppercase transition"
+                    >
+                      Late
+                    </button>
+                    <button
+                      onClick={() => logBulkAttendanceMutation.mutate('absent')}
+                      disabled={logBulkAttendanceMutation.isPending}
+                      className="px-2 py-1 bg-cyber-danger/10 border border-cyber-danger/20 hover:bg-cyber-danger/20 text-cyber-danger rounded text-[9px] font-bold uppercase transition"
+                    >
+                      Absent
+                    </button>
+                  </div>
+                )}
+                <span className="text-[10px] text-gray-500 font-semibold bg-white/5 border border-white/5 px-2 py-0.5 rounded">
+                  Date: {selectedDate}
+                </span>
+              </div>
             </div>
 
             {!selectedClassId || studentsLoading ? (
@@ -377,10 +457,11 @@ export const AttendanceTracker: React.FC = () => {
 
               {/* Generated Session QR Code */}
               <div className="my-6 bg-white p-4 rounded-xl inline-block shadow-xl border border-white/10 relative">
-                {/* Draw SVG QR mock */}
-                <svg width="120" height="120" viewBox="0 0 24 24" className="text-black">
-                  <path d="M0 0h6v6H0zm2 2h2v2H2zm8-2h6v6h-6zm2 2h2v2h-2zm-12 8h6v6H0zm2 2h2v2H2zm8-2h3v2h-3zm3 3h3v3h-3zm-3 3h3v-3h-3zm9 0h2v-2h-2zm-3-3h3v-3h-3zm6-3h2v2h-2zm-4-4h2v2h-2zm4-4h2v2h-2zm0 8h2v2h-2zm-2 2h2v2h-2zm-4 4h2v2h-2z" fill="currentColor" />
-                </svg>
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(activeQRClassId)}`}
+                  alt="Class QR Code Session"
+                  className="w-[150px] h-[150px]"
+                />
               </div>
 
               {/* Dynamic QR Session code token box */}
