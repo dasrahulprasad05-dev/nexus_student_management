@@ -17,7 +17,7 @@ export const ParentDashboard: React.FC = () => {
       if (!user) return [];
       const { data, error } = await supabase
         .from('students')
-        .select('*, profiles(*)')
+        .select('*, profiles!students_id_fkey(*)')
         .eq('parent_id', user.id);
 
       console.log('PARENT QUERY - user.id:', user.id);
@@ -41,7 +41,7 @@ export const ParentDashboard: React.FC = () => {
       // Student and Class details
       const { data: student } = await supabase
         .from('students')
-        .select('*, profiles(*), classes(*)')
+        .select('*, profiles!students_id_fkey(*), classes(*)')
         .eq('id', selectedChildId)
         .single();
 
