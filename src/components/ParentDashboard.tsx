@@ -15,10 +15,14 @@ export const ParentDashboard: React.FC = () => {
     queryKey: ['parent-kids', user?.id],
     queryFn: async () => {
       if (!user) return [];
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('students')
         .select('*, profiles(*)')
         .eq('parent_id', user.id);
+
+      console.log('PARENT QUERY - user.id:', user.id);
+      console.log('PARENT QUERY - data:', data);
+      console.log('PARENT QUERY - error:', error);
 
       if (data && data.length > 0) {
         setSelectedChildId(data[0].id);
