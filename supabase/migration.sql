@@ -224,6 +224,11 @@ CREATE POLICY "Viewable by authenticated users" ON public.activity_logs FOR SELE
 -- Secure specific tables
 CREATE POLICY "Staff view all marks" ON public.marks FOR SELECT USING (public.get_auth_user_role() IN ('admin', 'teacher'));
 CREATE POLICY "Students view own marks" ON public.marks FOR SELECT USING (student_id = auth.uid());
+CREATE POLICY "Parents view child marks" ON public.marks FOR SELECT USING (
+  student_id IN (
+    SELECT id FROM public.students WHERE parent_id = auth.uid()
+  )
+);
 
 CREATE POLICY "Admin view all fees" ON public.fees FOR SELECT USING (public.get_auth_user_role() = 'admin');
 CREATE POLICY "Students view own fees" ON public.fees FOR SELECT USING (student_id = auth.uid());
