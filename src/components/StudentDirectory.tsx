@@ -47,11 +47,23 @@ export const StudentDirectory: React.FC = () => {
   const { data: students, isLoading } = useQuery({
     queryKey: ['students-list'],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data: studentRows } = await supabase
         .from('students')
-        .select('*, profiles(*), classes(*)')
+        .select('*, classes(*)')
         .order('created_at', { ascending: false });
-      return data || [];
+
+      if (!studentRows || studentRows.length === 0) return [];
+
+      const ids = studentRows.map((s: any) => s.id);
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('id', ids);
+
+      return studentRows.map((s: any) => ({
+        ...s,
+        profiles: profiles?.find((p: any) => p.id === s.id) || null
+      }));
     }
   });
 
@@ -61,11 +73,25 @@ export const StudentDirectory: React.FC = () => {
     queryFn: async () => {
       if (!selectedStudentId) return null;
       
-      const { data: student } = await supabase
+      const { data: studentRow } = await supabase
         .from('students')
-        .select('*, profiles(*), classes(*)')
+        .select('*, classes(*)')
         .eq('id', selectedStudentId)
         .single();
+
+      let student = null;
+      if (studentRow) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', selectedStudentId)
+          .single();
+        
+        student = {
+          ...studentRow,
+          profiles: profile || null
+        };
+      }
 
       // Fetch child attendance
       const { data: attendance } = await supabase

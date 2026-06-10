@@ -375,18 +375,20 @@ DECLARE
   v_user_id UUID;
 BEGIN
   -- Insert dummy user into auth.users (encrypted password set to 'student123')
-  INSERT INTO auth.users (id, aud, email, encrypted_password, email_confirmed_at, phone_confirmed_at, raw_app_meta_data, raw_user_meta_data, role, confirmation_token)
+  INSERT INTO auth.users (
+    instance_id, id, aud, email, encrypted_password,
+    email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+    role, confirmation_token,
+    email_change, email_change_token_new,
+    email_change_token_current, recovery_token, reauthentication_token
+  )
   VALUES (
-    uuid_generate_v4(),
-    'authenticated',
-    p_email,
-    crypt('student123', gen_salt('bf')),
-    now(),
-    now(),
+    '00000000-0000-0000-0000-000000000000',
+    uuid_generate_v4(), 'authenticated', p_email,
+    crypt('student123', gen_salt('bf')), now(),
     '{"provider":"email","providers":["email"]}',
     json_build_object('full_name', p_name, 'role', 'student'),
-    'authenticated',
-    ''
+    'authenticated', '', '', '', '', '', ''
   )
   RETURNING id INTO v_user_id;
 
